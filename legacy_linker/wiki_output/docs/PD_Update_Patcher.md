@@ -36,11 +36,11 @@ This project calls the following external executables:
 ### Dependency Graph
 ```mermaid
 graph LR
-  Current[PD_Update_Patcher]
-  Current --> |Calls| PhotoDemon[PhotoDemon]
-  Current --> |Calls| PhotoDemon[PhotoDemon]
-  Current --> |Calls| PDUpdatePatcherexe[\PD_Update_Patcher.exe]
-  Current --> |Calls| PhotoDemon[PhotoDemon]
-  Current --> |Calls| ShellCall[Shell_Call]
-  Current --> |Calls| PhotoDemon[PhotoDemon]
+  Current["PD_Update_Patcher"]
+  Current --> PhotoDemon["PhotoDemon"]
+  Current --> PhotoDemon["PhotoDemon"]
+  Current --> PDUpdatePatcherexe["\\PD_Update_Patcher.exe"]
+  Current --> PhotoDemon["PhotoDemon"]
+  Current --> ShellCall["Shell_Call"]
+  Current --> PhotoDemon["PhotoDemon"]
 ```

@@ -5,6 +5,9 @@ theme:
     - navigation.expand
     - search.highlight
     - content.code.copy
+extra_javascript:
+  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
+  - javascripts/mermaid-init.js
 markdown_extensions:
   - pymdownx.superfences:
       custom_fences:

@@ -1,0 +1,64 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 2441 >>
+stream
+BT /F2 16 Tf 54 718 Td (LegacyLinker - App Summary) Tj ET
+BT /F2 13 Tf 54 689 Td (What it is) Tj ET
+BT /F1 10.5 Tf 54 676 Td (LegacyLinker analyzes legacy Visual Basic 6.0 codebases and generates a) Tj ET
+BT /F1 10.5 Tf 54 663 Td (searchable MkDocs wiki with dependency tables and diagrams.) Tj ET
+BT /F2 13 Tf 54 634 Td (Who it is for) Tj ET
+BT /F1 10.5 Tf 54 621 Td (Teams maintaining large VB6 systems who need a fast map of projects and) Tj ET
+BT /F1 10.5 Tf 54 608 Td (executable call relationships.) Tj ET
+BT /F2 13 Tf 54 579 Td (What it does) Tj ET
+BT /F1 10.5 Tf 54 566 Td (- Recursively scans a root directory for .vbp project files.) Tj ET
+BT /F1 10.5 Tf 54 553 Td (- Parses project metadata \(name, exe, forms, modules, classes\) from .vbp files.) Tj ET
+BT /F1 10.5 Tf 54 540 Td (- Detects outbound executable calls using regex scans for .exe, Shell, and) Tj ET
+BT /F1 10.5 Tf 54 527 Td (  CreateObject.) Tj ET
+BT /F1 10.5 Tf 54 514 Td (- Adds AST-based dependency detection via the Proleap VB6 parser.) Tj ET
+BT /F1 10.5 Tf 54 501 Td (- Generates per-project Markdown pages with components and dependency tables.) Tj ET
+BT /F1 10.5 Tf 54 488 Td (- Builds Mermaid dependency graphs and a MkDocs navigation config.) Tj ET
+BT /F2 13 Tf 54 459 Td (How it works \(architecture\)) Tj ET
+BT /F1 10.5 Tf 54 446 Td (- CLI entrypoint \(Picocli Main\) accepts rootDir and outputDir.) Tj ET
+BT /F1 10.5 Tf 54 433 Td (- ProjectScanner walks the tree, parses .vbp files, and builds VbProject models.) Tj ET
+BT /F1 10.5 Tf 54 420 Td (- Dependency scan combines regex pass with AstAnalyzer \(VB6 AST via Proleap\).) Tj ET
+BT /F1 10.5 Tf 54 407 Td (- MarkdownGenerator writes mkdocs.yml, index.md, and project pages with Mermaid) Tj ET
+BT /F1 10.5 Tf 54 394 Td (  graphs.) Tj ET
+BT /F1 10.5 Tf 54 381 Td (- MkDocs serves the generated site from the output directory.) Tj ET
+BT /F2 13 Tf 54 352 Td (How to run \(minimal\)) Tj ET
+BT /F1 10.5 Tf 54 339 Td (- Install Java JDK 17+, Maven, and Python 3.) Tj ET
+BT /F1 10.5 Tf 54 326 Td (- Compile the Java tool: mvn clean compile) Tj ET
+BT /F1 10.5 Tf 54 313 Td (- Install MkDocs and theme: python -m venv venv, activate it, then pip install) Tj ET
+BT /F1 10.5 Tf 54 300 Td (  mkdocs mkdocs-material) Tj ET
+BT /F1 10.5 Tf 54 287 Td (- Run the scanner: mvn exec:java -Dexec.args="<VB6_ROOT> -o wiki_output") Tj ET
+BT /F1 10.5 Tf 54 274 Td (- Preview the wiki: cd wiki_output and run mkdocs serve) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000251 00000 n 
+0000002744 00000 n 
+0000002812 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+2885
+%%EOF

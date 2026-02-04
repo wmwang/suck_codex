@@ -39,6 +39,9 @@ public class MarkdownGenerator {
         yaml.append("    - navigation.expand\n");
         yaml.append("    - search.highlight\n");
         yaml.append("    - content.code.copy\n");
+        yaml.append("extra_javascript:\n");
+        yaml.append("  - https://unpkg.com/mermaid@10/dist/mermaid.min.js\n");
+        yaml.append("  - javascripts/mermaid-init.js\n");
         yaml.append("markdown_extensions:\n");
         yaml.append("  - pymdownx.superfences:\n");
         yaml.append("      custom_fences:\n");
@@ -131,11 +134,12 @@ public class MarkdownGenerator {
             md.append("\n### Dependency Graph\n");
             md.append("```mermaid\n");
             md.append("graph LR\n");
-            md.append("  Current[").append(p.name()).append("]\n");
+            md.append("  Current[\"").append(escapeMermaidLabel(p.name())).append("\"]\n");
             for (com.legacy.linker.model.ProjectDependency dep : p.dependencies()) {
                 String targetName = resolveName(dep.targetExeName(), projects);
-                String safeTarget = targetName.replaceAll("[^a-zA-Z0-9]", "");
-                md.append("  Current --> |Calls| ").append(safeTarget).append("[").append(targetName).append("]\n");
+                String safeTarget = toMermaidId(targetName);
+                md.append("  Current --> ").append(safeTarget)
+                        .append("[\"").append(escapeMermaidLabel(targetName)).append("\"]\n");
             }
             md.append("```\n");
         }
@@ -162,5 +166,22 @@ public class MarkdownGenerator {
 
     private String getSafeFilename(String name) {
         return name.replaceAll("[^a-zA-Z0-9_\\-]", "_") + ".md";
+    }
+
+    private String toMermaidId(String name) {
+        String base = name.replaceAll("[^a-zA-Z0-9]", "");
+        if (base.isEmpty() || Character.isDigit(base.charAt(0)) || base.length() > 64) {
+            return "N" + Math.abs(name.hashCode());
+        }
+        return base;
+    }
+
+    private String escapeMermaidLabel(String label) {
+        String cleaned = label.replace("\\", "\\\\").replace("\"", "\\\"");
+        cleaned = cleaned.replace("\r", " ").replace("\n", " ").trim();
+        if (cleaned.length() > 80) {
+            cleaned = cleaned.substring(0, 77) + "...";
+        }
+        return cleaned;
     }
 }
