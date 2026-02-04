@@ -2,13 +2,21 @@ package com.legacy.linker.generator;
 
 import com.legacy.linker.model.VbProject;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public class MarkdownGenerator {
 
+    private static final int CONTEXT_LINES = 2;
     private final Path outputDir;
+    private final Map<Path, List<String>> sourceCache = new HashMap<>();
 
     public MarkdownGenerator(Path outputDir) {
         this.outputDir = outputDir;
@@ -16,7 +24,9 @@ public class MarkdownGenerator {
 
     public void generate(List<VbProject> projects) throws IOException {
         Path docsDir = outputDir.resolve("docs");
+        Path sourcesDir = docsDir.resolve("sources");
         Files.createDirectories(docsDir);
+        Files.createDirectories(sourcesDir);
 
         // 1. Generate mkdocs.yml
         generateMkDocsConfig(projects);
@@ -24,9 +34,13 @@ public class MarkdownGenerator {
         // 2. Generate Home Page
         generateIndex(docsDir, projects);
 
-        // 3. Generate Project Pages
+        // 3. Generate Global Dependency Overview
+        generateDependenciesOverview(docsDir, projects);
+
+        // 4. Generate Project Pages
         for (VbProject project : projects) {
             generateProjectPage(docsDir, project, projects);
+            generateSourceDocs(sourcesDir, project);
         }
     }
 
@@ -50,6 +64,7 @@ public class MarkdownGenerator {
         yaml.append("          format: !!python/name:pymdownx.superfences.fence_code_format\n");
         yaml.append("nav:\n");
         yaml.append("  - Home: index.md\n");
+        yaml.append("  - All Dependencies: dependencies.md\n");
 
         // Sorting projects by name for better navigation
         projects.stream()
@@ -117,17 +132,20 @@ public class MarkdownGenerator {
         } else {
             md.append("### Outbound Calls\n");
             md.append("This project calls the following external executables:\n\n");
-            md.append("| Target | Source File | Line | Content |\n");
-            md.append("| :--- | :--- | :---: | :--- |\n");
+            md.append("| Target | Source File | Line | Context | Content |\n");
+            md.append("| :--- | :--- | :---: | :--- | :--- |\n");
 
             for (com.legacy.linker.model.ProjectDependency dep : p.dependencies()) {
                 // Try to resolve the target exe to a project name
                 String targetLink = resolveLink(dep.targetExeName(), projects);
-                md.append(String.format("| %s | `%s` | %d | `%s` |\n",
+                String sourceLink = buildSourceLink(p, dep);
+                String contextSnippet = buildContextSnippet(dep);
+                md.append(String.format("| %s | %s | %s | %s | `%s` |\n",
                         targetLink,
-                        dep.sourceFile().getFileName().toString(),
-                        dep.lineNumber(),
-                        dep.rawLineContent().replace("|", "\\|").trim() // Escape pipe table char
+                        sourceLink,
+                        formatLineNumber(dep.lineNumber()),
+                        contextSnippet,
+                        escapeTableCell(dep.rawLineContent()).trim() // Escape pipe table char
                 ));
             }
 
@@ -145,6 +163,146 @@ public class MarkdownGenerator {
         }
 
         Files.writeString(docsDir.resolve(getSafeFilename(p.name())), md.toString());
+    }
+
+    private void generateDependenciesOverview(Path docsDir, List<VbProject> projects) throws IOException {
+        StringBuilder md = new StringBuilder();
+        md.append("# Global Dependency Graph\n\n");
+        md.append("This view shows all detected outbound calls across projects.\n\n");
+        md.append("```mermaid\n");
+        md.append("graph LR\n");
+
+        Set<String> nodes = new HashSet<>();
+        Set<String> edges = new HashSet<>();
+
+        for (VbProject project : projects) {
+            String safeProject = sanitizeNodeId(project.name());
+            nodes.add(String.format("  %s[%s]", safeProject, project.name()));
+
+            for (com.legacy.linker.model.ProjectDependency dep : project.dependencies()) {
+                String targetName = resolveName(dep.targetExeName(), projects);
+                String safeTarget = sanitizeNodeId(targetName);
+                nodes.add(String.format("  %s[%s]", safeTarget, targetName));
+                edges.add(String.format("  %s --> |Calls| %s", safeProject, safeTarget));
+            }
+        }
+
+        for (String node : nodes) {
+            md.append(node).append("\n");
+        }
+        for (String edge : edges) {
+            md.append(edge).append("\n");
+        }
+
+        md.append("```\n");
+        Files.writeString(docsDir.resolve("dependencies.md"), md.toString());
+    }
+
+    private void generateSourceDocs(Path sourcesDir, VbProject project) throws IOException {
+        List<Path> sourceFiles = new ArrayList<>();
+        sourceFiles.addAll(project.forms());
+        sourceFiles.addAll(project.modules());
+        sourceFiles.addAll(project.classes());
+
+        Path projectDir = sourcesDir.resolve(getSafeFilenameBase(project.name()));
+        Files.createDirectories(projectDir);
+
+        for (Path source : sourceFiles) {
+            if (!Files.exists(source)) {
+                continue;
+            }
+
+            List<String> lines = readFileSmart(source);
+            StringBuilder md = new StringBuilder();
+            md.append("# ").append(source.getFileName()).append("\n\n");
+            md.append("Source path: `").append(source.toString()).append("`\n\n");
+            md.append("| Line | Code |\n");
+            md.append("| :---: | :--- |\n");
+
+            int lineNumber = 1;
+            for (String line : lines) {
+                String safeLine = escapeTableCell(line);
+                md.append("| <a id=\"L").append(lineNumber).append("\"></a>")
+                        .append(lineNumber)
+                        .append(" | `")
+                        .append(safeLine)
+                        .append("` |\n");
+                lineNumber++;
+            }
+
+            Path outputPath = projectDir.resolve(getSafeFilename(source.getFileName().toString()));
+            Files.writeString(outputPath, md.toString());
+        }
+    }
+
+    private String buildSourceLink(VbProject project, com.legacy.linker.model.ProjectDependency dep) {
+        String filename = getSafeFilename(dep.sourceFile().getFileName().toString());
+        String projectDir = getSafeFilenameBase(project.name());
+        String anchor = dep.lineNumber() > 0 ? "#L" + dep.lineNumber() : "";
+        return String.format("[%s](sources/%s/%s%s)", dep.sourceFile().getFileName(), projectDir, filename, anchor);
+    }
+
+    private String buildContextSnippet(com.legacy.linker.model.ProjectDependency dep) {
+        if (dep.lineNumber() <= 0) {
+            return "_N/A_";
+        }
+
+        List<String> lines = sourceCache.computeIfAbsent(dep.sourceFile(), path -> {
+            try {
+                return readFileSmart(path);
+            } catch (IOException e) {
+                return List.of();
+            }
+        });
+
+        if (lines.isEmpty()) {
+            return "_Unavailable_";
+        }
+
+        int lineIndex = dep.lineNumber() - 1;
+        int start = Math.max(0, lineIndex - CONTEXT_LINES);
+        int end = Math.min(lines.size() - 1, lineIndex + CONTEXT_LINES);
+        StringBuilder snippet = new StringBuilder();
+
+        for (int i = start; i <= end; i++) {
+            if (i > start) {
+                snippet.append(" / ");
+            }
+            snippet.append(escapeTableCell(lines.get(i).trim()));
+        }
+
+        return "`" + snippet + "`";
+    }
+
+    private String formatLineNumber(int lineNumber) {
+        return lineNumber > 0 ? Integer.toString(lineNumber) : "-";
+    }
+
+    private List<String> readFileSmart(Path path) throws IOException {
+        byte[] fileData = Files.readAllBytes(path);
+
+        com.ibm.icu.text.CharsetDetector detector = new com.ibm.icu.text.CharsetDetector();
+        detector.setText(fileData);
+        com.ibm.icu.text.CharsetMatch match = detector.detect();
+
+        String charsetName = "ISO-8859-1";
+        if (match != null && match.getConfidence() > 50) {
+            charsetName = match.getName();
+        } else {
+            try {
+                java.nio.charset.Charset.forName("Big5").newDecoder().decode(java.nio.ByteBuffer.wrap(fileData));
+                charsetName = "Big5";
+            } catch (Exception e) {
+                // fall back
+            }
+        }
+
+        try {
+            String content = new String(fileData, charsetName);
+            return java.util.Arrays.asList(content.split("\\r?\\n"));
+        } catch (Exception e) {
+            return Files.readAllLines(path, StandardCharsets.ISO_8859_1);
+        }
     }
 
     // Naive lookup: find the first project that produces this exe
