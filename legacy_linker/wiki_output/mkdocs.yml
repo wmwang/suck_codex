@@ -1,0 +1,20 @@
+site_name: Legacy VB Wiki
+theme:
+  name: material
+  features:
+    - navigation.expand
+    - search.highlight
+    - content.code.copy
+markdown_extensions:
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+nav:
+  - Home: index.md
+  - PD_Update_Generator: PD_Update_Generator.md
+  - PD_Update_Patcher: PD_Update_Patcher.md
+  - PhotoDemon: PhotoDemon.md
+  - PhotoDemon_i18n: PhotoDemon_i18n.md
+  - VBP_SearchAndReplace: VBP_SearchAndReplace.md
