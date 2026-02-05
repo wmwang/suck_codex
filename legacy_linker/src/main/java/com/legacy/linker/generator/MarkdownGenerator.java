@@ -1,6 +1,7 @@
 package com.legacy.linker.generator;
 
 import com.legacy.linker.model.VbProject;
+import com.legacy.linker.scanner.AstAnalysisReport;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -15,11 +16,18 @@ import java.util.Set;
 public class MarkdownGenerator {
 
     private static final int CONTEXT_LINES = 2;
+    private static final int LIST_COLLAPSE_THRESHOLD = 40;
     private final Path outputDir;
+    private final AstAnalysisReport astReport;
     private final Map<Path, List<String>> sourceCache = new HashMap<>();
 
     public MarkdownGenerator(Path outputDir) {
+        this(outputDir, AstAnalysisReport.get());
+    }
+
+    public MarkdownGenerator(Path outputDir, AstAnalysisReport astReport) {
         this.outputDir = outputDir;
+        this.astReport = astReport;
     }
 
     public void generate(List<VbProject> projects) throws IOException {
@@ -30,6 +38,7 @@ public class MarkdownGenerator {
 
         // 1. Generate mkdocs.yml
         generateMkDocsConfig(projects);
+        generateThemeAssets(docsDir);
 
         // 2. Generate Home Page
         generateIndex(docsDir, projects);
@@ -37,7 +46,10 @@ public class MarkdownGenerator {
         // 3. Generate Global Dependency Overview
         generateDependenciesOverview(docsDir, projects);
 
-        // 4. Generate Project Pages
+        // 4. Generate AST Summary
+        generateAstSummary(docsDir);
+
+        // 5. Generate Project Pages
         for (VbProject project : projects) {
             generateProjectPage(docsDir, project, projects);
             generateSourceDocs(sourcesDir, project);
@@ -49,14 +61,31 @@ public class MarkdownGenerator {
         yaml.append("site_name: Legacy VB Wiki\n");
         yaml.append("theme:\n");
         yaml.append("  name: material\n");
+        yaml.append("  font:\n");
+        yaml.append("    text: IBM Plex Sans\n");
+        yaml.append("    code: IBM Plex Mono\n");
         yaml.append("  features:\n");
         yaml.append("    - navigation.expand\n");
+        yaml.append("    - navigation.sections\n");
+        yaml.append("    - navigation.tabs\n");
+        yaml.append("    - navigation.top\n");
         yaml.append("    - search.highlight\n");
+        yaml.append("    - search.suggest\n");
+        yaml.append("    - search.share\n");
         yaml.append("    - content.code.copy\n");
+        yaml.append("    - toc.follow\n");
+        yaml.append("extra_css:\n");
+        yaml.append("  - stylesheets/legacy-theme.css\n");
         yaml.append("extra_javascript:\n");
         yaml.append("  - https://unpkg.com/mermaid@10/dist/mermaid.min.js\n");
         yaml.append("  - javascripts/mermaid-init.js\n");
         yaml.append("markdown_extensions:\n");
+        yaml.append("  - admonition\n");
+        yaml.append("  - pymdownx.details\n");
+        yaml.append("  - pymdownx.tabbed:\n");
+        yaml.append("      alternate_style: true\n");
+        yaml.append("  - toc:\n");
+        yaml.append("      permalink: true\n");
         yaml.append("  - pymdownx.superfences:\n");
         yaml.append("      custom_fences:\n");
         yaml.append("        - name: mermaid\n");
@@ -64,15 +93,17 @@ public class MarkdownGenerator {
         yaml.append("          format: !!python/name:pymdownx.superfences.fence_code_format\n");
         yaml.append("nav:\n");
         yaml.append("  - Home: index.md\n");
-        yaml.append("  - All Dependencies: dependencies.md\n");
+        yaml.append("  - Projects:\n");
 
         // Sorting projects by name for better navigation
         projects.stream()
                 .sorted((p1, p2) -> p1.name().compareToIgnoreCase(p2.name()))
                 .forEach(p -> {
                     String filename = getSafeFilename(p.name());
-                    yaml.append("  - ").append(p.name()).append(": ").append(filename).append("\n");
+                    yaml.append("      - ").append(p.name()).append(": ").append(filename).append("\n");
                 });
+        yaml.append("  - Dependencies: dependencies.md\n");
+        yaml.append("  - Analysis: ast_summary.md\n");
 
         Files.writeString(outputDir.resolve("mkdocs.yml"), yaml.toString());
     }
@@ -81,6 +112,16 @@ public class MarkdownGenerator {
         StringBuilder md = new StringBuilder();
         md.append("# Legacy System Overview\n\n");
         md.append("Welcome to the mapped documentation of the Legacy VB system.\n\n");
+        md.append("!!! info \"How to use this site\"\n");
+        md.append("    Use the **Projects** tab to browse a specific executable. Each project page includes:\n");
+        md.append("    - A quick summary\n");
+        md.append("    - Components (forms/modules)\n");
+        md.append("    - Connections (outbound calls and dependency graph)\n\n");
+        md.append("## Quick Links\n");
+        for (VbProject p : projects) {
+            md.append(String.format("- [%s](%s)\n", p.name(), getSafeFilename(p.name())));
+        }
+        md.append("\n");
         md.append("## Project Statistics\n\n");
         md.append("| Project Name | Exe Name | Forms | Modules | Outbound Calls |\n");
         md.append("| :--- | :--- | :---: | :---: | :---: |\n");
@@ -105,26 +146,24 @@ public class MarkdownGenerator {
         md.append("- **Exe Name**: `").append(p.exeName()).append("`\n");
         md.append("- **Project Path**: `").append(p.path().toString()).append("`\n\n");
 
-        md.append("## Components\n");
+        int outboundCalls = p.dependencies() != null ? p.dependencies().size() : 0;
+        md.append("## At a Glance\n");
+        md.append("- **Executable**: `").append(p.exeName()).append("`\n");
+        md.append("- **Forms**: ").append(p.forms().size()).append("\n");
+        md.append("- **Modules**: ").append(p.modules().size()).append("\n");
+        md.append("- **Outbound calls**: ").append(outboundCalls).append("\n");
+        md.append("- **Jump to**: [Components](#components) | [Connections](#connections)\n\n");
 
-        md.append("### Forms (").append(p.forms().size()).append(")\n");
-        if (p.forms().isEmpty()) {
-            md.append("_No forms found._\n");
-        } else {
-            for (Path f : p.forms()) {
-                md.append("- `").append(f.getFileName().toString()).append("`\n");
-            }
+        md.append("## Components\n");
+        if (p.forms().size() > LIST_COLLAPSE_THRESHOLD || p.modules().size() > LIST_COLLAPSE_THRESHOLD) {
+            md.append("\nLarge lists are collapsed for readability. Expand a section to view full details.\n");
         }
+        md.append("\n=== \"Forms (").append(p.forms().size()).append(")\"\n");
+        appendListOrCollapsed(md, p.forms(), "Forms");
         md.append("\n");
 
-        md.append("### Modules (").append(p.modules().size()).append(")\n");
-        if (p.modules().isEmpty()) {
-            md.append("_No modules found._\n");
-        } else {
-            for (Path m : p.modules()) {
-                md.append("- `").append(m.getFileName().toString()).append("`\n");
-            }
-        }
+        md.append("=== \"Modules (").append(p.modules().size()).append(")\"\n");
+        appendListOrCollapsed(md, p.modules(), "Modules");
 
         md.append("## Connections\n");
         if (p.dependencies().isEmpty()) {
@@ -165,6 +204,25 @@ public class MarkdownGenerator {
         Files.writeString(docsDir.resolve(getSafeFilename(p.name())), md.toString());
     }
 
+    private void appendListOrCollapsed(StringBuilder md, List<Path> items, String label) {
+        if (items.isEmpty()) {
+            md.append("    _No ").append(label.toLowerCase()).append(" found._\n");
+            return;
+        }
+
+        if (items.size() > LIST_COLLAPSE_THRESHOLD) {
+            md.append("    ??? \"Show ").append(label.toLowerCase()).append(" list\"\n");
+            for (Path item : items) {
+                md.append("        - `").append(item.getFileName().toString()).append("`\n");
+            }
+            return;
+        }
+
+        for (Path item : items) {
+            md.append("    - `").append(item.getFileName().toString()).append("`\n");
+        }
+    }
+
     private void generateDependenciesOverview(Path docsDir, List<VbProject> projects) throws IOException {
         StringBuilder md = new StringBuilder();
         md.append("# Global Dependency Graph\n\n");
@@ -177,12 +235,12 @@ public class MarkdownGenerator {
 
         for (VbProject project : projects) {
             String safeProject = sanitizeNodeId(project.name());
-            nodes.add(String.format("  %s[%s]", safeProject, project.name()));
+            nodes.add(String.format("  %s[\"%s\"]", safeProject, escapeMermaidLabel(project.name())));
 
             for (com.legacy.linker.model.ProjectDependency dep : project.dependencies()) {
                 String targetName = resolveName(dep.targetExeName(), projects);
                 String safeTarget = sanitizeNodeId(targetName);
-                nodes.add(String.format("  %s[%s]", safeTarget, targetName));
+                nodes.add(String.format("  %s[\"%s\"]", safeTarget, escapeMermaidLabel(targetName)));
                 edges.add(String.format("  %s --> |Calls| %s", safeProject, safeTarget));
             }
         }
@@ -196,6 +254,72 @@ public class MarkdownGenerator {
 
         md.append("```\n");
         Files.writeString(docsDir.resolve("dependencies.md"), md.toString());
+    }
+
+    private void generateAstSummary(Path docsDir) throws IOException {
+        Files.writeString(docsDir.resolve("ast_summary.md"), astReport.toMarkdown());
+    }
+
+    private void generateThemeAssets(Path docsDir) throws IOException {
+        Path stylesDir = docsDir.resolve("stylesheets");
+        Files.createDirectories(stylesDir);
+        Path cssPath = stylesDir.resolve("legacy-theme.css");
+
+        String css = "@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');\n\n"
+                + ":root {\n"
+                + "  --md-primary-fg-color: #1f3a5f;\n"
+                + "  --md-primary-fg-color--light: #3a5f8a;\n"
+                + "  --md-primary-fg-color--dark: #172a43;\n"
+                + "  --md-accent-fg-color: #e84a5f;\n"
+                + "  --md-default-fg-color: #1e2330;\n"
+                + "  --md-default-fg-color--light: #4b5565;\n"
+                + "  --md-default-bg-color: #f7f4ef;\n"
+                + "}\n\n"
+                + ".md-header {\n"
+                + "  background: linear-gradient(135deg, #1f3a5f 0%, #2c4d7a 45%, #3c6e8f 100%);\n"
+                + "  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);\n"
+                + "}\n\n"
+                + ".md-main {\n"
+                + "  background:\n"
+                + "    radial-gradient(1200px 800px at 10% -10%, rgba(232, 74, 95, 0.08), transparent 60%),\n"
+                + "    radial-gradient(900px 600px at 90% 0%, rgba(31, 58, 95, 0.08), transparent 55%),\n"
+                + "    var(--md-default-bg-color);\n"
+                + "}\n\n"
+                + ".md-typeset h1 {\n"
+                + "  letter-spacing: -0.02em;\n"
+                + "  font-weight: 700;\n"
+                + "}\n\n"
+                + ".md-typeset h2 {\n"
+                + "  margin-top: 1.6em;\n"
+                + "  padding-top: 0.3em;\n"
+                + "  border-top: 1px solid rgba(31, 58, 95, 0.12);\n"
+                + "}\n\n"
+                + ".md-typeset table:not([class]) {\n"
+                + "  border-radius: 10px;\n"
+                + "  overflow: hidden;\n"
+                + "  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);\n"
+                + "}\n\n"
+                + ".md-typeset table:not([class]) th {\n"
+                + "  background: rgba(31, 58, 95, 0.08);\n"
+                + "}\n\n"
+                + ".md-typeset code {\n"
+                + "  font-weight: 500;\n"
+                + "  background: rgba(31, 58, 95, 0.08);\n"
+                + "}\n\n"
+                + ".md-typeset .admonition,\n"
+                + ".md-typeset details {\n"
+                + "  border-radius: 12px;\n"
+                + "  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);\n"
+                + "}\n\n"
+                + ".md-typeset .tabbed-set > label {\n"
+                + "  font-weight: 600;\n"
+                + "  letter-spacing: 0.01em;\n"
+                + "}\n\n"
+                + ".md-nav__link--active {\n"
+                + "  font-weight: 600;\n"
+                + "}\n";
+
+        Files.writeString(cssPath, css);
     }
 
     private void generateSourceDocs(Path sourcesDir, VbProject project) throws IOException {
@@ -221,12 +345,12 @@ public class MarkdownGenerator {
 
             int lineNumber = 1;
             for (String line : lines) {
-                String safeLine = escapeTableCell(line);
+                String safeLine = escapeHtmlForTable(line);
                 md.append("| <a id=\"L").append(lineNumber).append("\"></a>")
                         .append(lineNumber)
-                        .append(" | `")
+                        .append(" | <code>")
                         .append(safeLine)
-                        .append("` |\n");
+                        .append("</code> |\n");
                 lineNumber++;
             }
 
@@ -322,8 +446,12 @@ public class MarkdownGenerator {
                 .orElse(exeName);
     }
 
+    private String getSafeFilenameBase(String name) {
+        return name.replaceAll("[^a-zA-Z0-9_\\-]", "_");
+    }
+
     private String getSafeFilename(String name) {
-        return name.replaceAll("[^a-zA-Z0-9_\\-]", "_") + ".md";
+        return getSafeFilenameBase(name) + ".md";
     }
 
     private String toMermaidId(String name) {
@@ -334,6 +462,10 @@ public class MarkdownGenerator {
         return base;
     }
 
+    private String sanitizeNodeId(String name) {
+        return toMermaidId(name);
+    }
+
     private String escapeMermaidLabel(String label) {
         String cleaned = label.replace("\\", "\\\\").replace("\"", "\\\"");
         cleaned = cleaned.replace("\r", " ").replace("\n", " ").trim();
@@ -341,5 +473,29 @@ public class MarkdownGenerator {
             cleaned = cleaned.substring(0, 77) + "...";
         }
         return cleaned;
+    }
+
+    private String escapeTableCell(String cell) {
+        if (cell == null) {
+            return "";
+        }
+        return cell.replace("\\", "\\\\")
+                .replace("|", "\\|")
+                .replace("`", "\\`")
+                .replace("\r", " ")
+                .replace("\n", " ");
+    }
+
+    private String escapeHtmlForTable(String cell) {
+        if (cell == null) {
+            return "";
+        }
+        String escaped = cell.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("|", "&#124;")
+                .replace("\r", " ")
+                .replace("\n", " ");
+        return escaped;
     }
 }

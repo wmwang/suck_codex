@@ -14,7 +14,13 @@ import java.util.List;
 
 public class AstAnalyzer {
 
-    private Path createUtf8TempFile(Path original) throws IOException {
+    public enum SanitizationLevel {
+        STRICT,
+        RELAXED,
+        HEAVY
+    }
+
+    private Path createUtf8TempFile(Path original, SanitizationLevel level) throws IOException {
         List<String> lines = Files.readAllLines(original, java.nio.charset.StandardCharsets.ISO_8859_1);
 
         StringBuilder cleanContent = new StringBuilder();
@@ -26,6 +32,7 @@ public class AstAnalyzer {
             codeStarted = true;
         }
 
+        StringBuilder pendingLine = new StringBuilder();
         for (String line : lines) {
             if (!codeStarted) {
                 String trimmed = line.trim();
@@ -34,7 +41,31 @@ public class AstAnalyzer {
                     cleanContent.append(line).append(System.lineSeparator());
                 }
             } else {
-                cleanContent.append(line).append(System.lineSeparator());
+                if (pendingLine.length() > 0) {
+                    pendingLine.append(" ").append(line.trim());
+                } else {
+                    pendingLine.append(line);
+                }
+
+                if (isLineContinuation(pendingLine.toString())) {
+                    stripLineContinuation(pendingLine);
+                    continue;
+                }
+
+                for (String sanitized : sanitizeLine(pendingLine.toString(), level)) {
+                    if (!sanitized.isEmpty()) {
+                        cleanContent.append(sanitized).append(System.lineSeparator());
+                    }
+                }
+                pendingLine.setLength(0);
+            }
+        }
+
+        if (pendingLine.length() > 0) {
+            for (String sanitized : sanitizeLine(pendingLine.toString(), level)) {
+                if (!sanitized.isEmpty()) {
+                    cleanContent.append(sanitized).append(System.lineSeparator());
+                }
             }
         }
 
@@ -62,39 +93,146 @@ public class AstAnalyzer {
         return temp;
     }
 
-    public List<ProjectDependency> analyze(Path file) {
-        List<ProjectDependency> dependencies = new ArrayList<>();
-        try {
-            Path tempFile = createUtf8TempFile(file);
-            System.out.println("AST analyzing: " + file.getFileName());
-
-            Program program = new VbParserRunnerImpl().analyzeFile(tempFile.toFile());
-
-            // Collect all modules
-            List<Module> allModules = new ArrayList<>();
-            allModules.addAll(program.getClazzModules().values());
-            allModules.addAll(program.getStandardModules().values());
-
-            if (allModules.isEmpty()) {
-                allModules.addAll(program.getModules());
-            }
-
-            for (Module module : allModules) {
-                // Process all procedures in the module
-                for (Procedure procedure : module.getProcedures()) {
-                    String scopeName = procedure.getName();
-                    analyzeStatements(scopeName, procedure.getStatements(), dependencies, file);
-                }
-            }
-
-            // Cleanup
-            Files.deleteIfExists(tempFile);
-            Files.deleteIfExists(tempFile.getParent());
-
-        } catch (Exception e) {
-            System.err.println("AST Parse Error for " + file + ": " + e.getMessage());
+    private List<String> sanitizeLine(String line, SanitizationLevel level) {
+        String trimmed = line.trim();
+        String lowerTrimmed = trimmed.toLowerCase();
+        if (trimmed.startsWith("#")) {
+            return List.of();
         }
-        return dependencies;
+        if (lowerTrimmed.startsWith("attribute ")) {
+            return List.of();
+        }
+        if (lowerTrimmed.startsWith("'") || lowerTrimmed.startsWith("rem ") || lowerTrimmed.equals("rem")) {
+            return List.of(line);
+        }
+        if (level == SanitizationLevel.RELAXED || level == SanitizationLevel.HEAVY) {
+            if (lowerTrimmed.startsWith("declare ")
+                    || lowerTrimmed.startsWith("type ")
+                    || lowerTrimmed.startsWith("enum ")
+                    || lowerTrimmed.startsWith("with ")
+                    || lowerTrimmed.equals("end with")
+                    || lowerTrimmed.startsWith("implements ")
+                    || lowerTrimmed.contains("ptrsafe")
+                    || lowerTrimmed.contains("addressof")
+                    || lowerTrimmed.startsWith("defobj ")) {
+                return List.of();
+            }
+        }
+        if (level == SanitizationLevel.HEAVY) {
+            if (lowerTrimmed.startsWith("version ")
+                    || lowerTrimmed.startsWith("object=")
+                    || lowerTrimmed.startsWith("begin ")
+                    || lowerTrimmed.startsWith("end ")
+                    || lowerTrimmed.startsWith("beginproperty ")
+                    || lowerTrimmed.startsWith("endproperty ")
+                    || lowerTrimmed.startsWith("clientheight")
+                    || lowerTrimmed.startsWith("clientwidth")
+                    || lowerTrimmed.startsWith("clienttop")
+                    || lowerTrimmed.startsWith("clientleft")) {
+                return List.of();
+            }
+        }
+
+        List<String> parts = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inString = false;
+
+        for (int i = 0; i < line.length(); i++) {
+            char ch = line.charAt(i);
+            if (ch == '"') {
+                if (i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                    current.append("\"\"");
+                    i++;
+                    continue;
+                }
+                inString = !inString;
+                current.append(ch);
+                continue;
+            }
+
+            if (ch == ':' && !inString) {
+                parts.add(current.toString());
+                current.setLength(0);
+                continue;
+            }
+
+            current.append(ch);
+        }
+
+        if (current.length() > 0) {
+            parts.add(current.toString());
+        }
+
+        return parts;
+    }
+
+    private boolean isLineContinuation(String line) {
+        String trimmed = line.trim();
+        String lower = trimmed.toLowerCase();
+        if (lower.startsWith("'") || lower.startsWith("rem ") || lower.equals("rem")) {
+            return false;
+        }
+        return trimmed.endsWith("_");
+    }
+
+    private void stripLineContinuation(StringBuilder line) {
+        int lastUnderscore = line.lastIndexOf("_");
+        if (lastUnderscore >= 0) {
+            line.delete(lastUnderscore, line.length());
+        }
+    }
+
+    private boolean shouldSkipAst(Path file) {
+        String lower = file.toString().toLowerCase();
+        return !(lower.endsWith(".bas") || lower.endsWith(".frm") || lower.endsWith(".cls"));
+    }
+
+    public List<ProjectDependency> analyze(Path file) {
+        if (shouldSkipAst(file)) {
+            AstAnalysisReport.get().recordSkipped(file);
+            return List.of();
+        }
+
+        System.out.println("AST analyzing: " + file.getFileName());
+        for (SanitizationLevel level : new SanitizationLevel[] { SanitizationLevel.STRICT, SanitizationLevel.RELAXED,
+                SanitizationLevel.HEAVY }) {
+            List<ProjectDependency> dependencies = new ArrayList<>();
+            try {
+                AstAnalysisReport.get().recordAttempt(file, level);
+                Path tempFile = createUtf8TempFile(file, level);
+
+                Program program = new VbParserRunnerImpl().analyzeFile(tempFile.toFile());
+
+                // Collect all modules
+                List<Module> allModules = new ArrayList<>();
+                allModules.addAll(program.getClazzModules().values());
+                allModules.addAll(program.getStandardModules().values());
+
+                if (allModules.isEmpty()) {
+                    allModules.addAll(program.getModules());
+                }
+
+                for (Module module : allModules) {
+                    // Process all procedures in the module
+                    for (Procedure procedure : module.getProcedures()) {
+                        String scopeName = procedure.getName();
+                        analyzeStatements(scopeName, procedure.getStatements(), dependencies, file);
+                    }
+                }
+
+                // Cleanup
+                Files.deleteIfExists(tempFile);
+                Files.deleteIfExists(tempFile.getParent());
+
+                AstAnalysisReport.get().recordSuccess(file, level);
+                return dependencies;
+            } catch (Exception e) {
+                // Try next sanitization level.
+            }
+        }
+
+        AstAnalysisReport.get().recordFailure(file);
+        return List.of();
     }
 
     private void analyzeStatements(String scopeName, List<Statement> statements, List<ProjectDependency> dependencies,

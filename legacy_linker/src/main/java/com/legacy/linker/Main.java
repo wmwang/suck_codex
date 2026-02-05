@@ -3,6 +3,7 @@ package com.legacy.linker;
 import com.legacy.linker.generator.MarkdownGenerator;
 import com.legacy.linker.model.VbProject;
 import com.legacy.linker.scanner.ProjectScanner;
+import com.legacy.linker.scanner.AstAnalysisReport;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -25,6 +26,7 @@ public class Main implements Callable<Integer> {
     public Integer call() throws Exception {
         System.out.println("Analyzing directory: " + rootDir.toAbsolutePath());
 
+        AstAnalysisReport.get().reset();
         ProjectScanner scanner = new ProjectScanner();
         List<VbProject> projects = scanner.scan(rootDir);
 
